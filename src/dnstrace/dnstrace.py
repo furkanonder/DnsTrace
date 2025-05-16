@@ -32,12 +32,13 @@ except ImportError:
 
 
 class DnsTrace:
-    def __init__(self, bpf_kprobe: bytes, bpf_sock: bytes) -> None:
+    def __init__(self, bpf_kprobe: bytes, bpf_sock: bytes, tail_mode: bool = False) -> None:
         self.bpf_kprobe = BPF(text=bpf_kprobe)
         self.bpf_sock = BPF(text=bpf_sock)
         self.packets: Counter = Counter()
         self.query_types: Counter = Counter()
         self.start_time = datetime.now()
+        self.tail_mode = tail_mode
 
     @staticmethod
     def create_skb_event(size: int) -> type[ct.Structure]:
@@ -126,17 +127,25 @@ class DnsTrace:
         if_name = socket.if_indextoname(sk.ifindex)
         ip_version, ip_proto, ip_src, ip_dst, query_type, is_query = self.parse_packet(bytes(sk.raw))
         if is_query:
-            key = (proc_name, if_name, ip_version, ip_proto, ip_src, ip_dst, query_type)
-            self.packets[key] += 1
-            self.query_types[query_type] += 1
-            self.print_stats()
+            if self.tail_mode:
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                print(f"{timestamp}: query[{query_type}] {proc_name} from {ip_src}")
+            else:
+                key = (proc_name, if_name, ip_version, ip_proto, ip_src, ip_dst, query_type)
+                self.packets[key] += 1
+                self.query_types[query_type] += 1
+                self.print_stats()
 
     def start(self) -> None:
         self.bpf_kprobe.attach_kprobe(event=b"tcp_sendmsg", fn_name=b"trace_sendmsg")
         self.bpf_kprobe.attach_kprobe(event=b"udp_sendmsg", fn_name=b"trace_sendmsg")
         BPF.attach_raw_socket(self.bpf_sock.load_func(b"dns_filter", BPF.SOCKET_FILTER), b"")
         self.bpf_sock[b"dns_event_outputs"].open_perf_buffer(self.display_dns_event)
-        self.print_stats()
+
+        if self.tail_mode:
+            print("Press Ctrl+C to exit\n")
+        else:
+            self.print_stats()
 
         while True:
             try:

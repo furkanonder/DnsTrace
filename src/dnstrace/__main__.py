@@ -1,3 +1,5 @@
+import argparse
+
 from dnstrace.dnstrace import DnsTrace
 
 BPF_KPROBE = b"""
@@ -99,7 +101,11 @@ int dns_filter(struct __sk_buff *skb) {
 
 
 def main():
-    dns_trace = DnsTrace(BPF_KPROBE, BPF_SOCK)
+    parser = argparse.ArgumentParser(description="Monitor DNS queries by host processes using eBPF!")
+    parser.add_argument("-t", "--tail", action="store_true", help="Stream live DNS queries")
+    args = parser.parse_args()
+
+    dns_trace = DnsTrace(BPF_KPROBE, BPF_SOCK, tail_mode=args.tail)
     dns_trace.start()
 
 
