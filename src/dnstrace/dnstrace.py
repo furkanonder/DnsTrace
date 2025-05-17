@@ -9,11 +9,22 @@ from datetime import datetime
 
 from dnslib import QTYPE, DNSRecord
 
-from dnstrace.color import BLUE, CYAN, GREEN, MAGENTA, RED, YELLOW, set_color
+from dnstrace.color import printer
 
 DNS_PROTOCOLS = {17: "UDP", 6: "TCP"}
 IP_VERSIONS = {4: "IPv4"}
 ETH_LENGTH = 14
+
+TABLE_HEADERS = [
+    ("Process", "green", 30),
+    ("Interface", "blue", 21),
+    ("IP Version", "magenta", 20),
+    ("Protocol", "magenta", 8),
+    ("Source IP", "yellow", 24),
+    ("Destination IP", "yellow", 24),
+    ("Query Type", "cyan", 10),
+    ("Count", "magenta", 5),
+]
 
 try:
     version = sys.version_info
@@ -22,12 +33,8 @@ try:
     site.addsitedir(os.path.expandvars("$PYTHON_USER_SITE"))
     from bcc import BPF
 except ImportError:
-    print(set_color(RED, "Error: The 'bcc' module is not available."))
-    print(
-        set_color(
-            BLUE, "For installation instructions, please visit: https://github.com/iovisor/bcc/blob/master/INSTALL.md"
-        )
-    )
+    printer.error("Error: The 'bcc' module is not available.")
+    printer.error("For installation instructions, please visit: https://github.com/iovisor/bcc/blob/master/INSTALL.md")
     sys.exit(1)
 
 
@@ -84,31 +91,26 @@ class DnsTrace:
 
     def print_stats(self) -> None:
         os.system("clear")
-        print(
-            f"DNSTrace v0.1.0\t\t {set_color(BLUE, 'START TIME:')} {self.start_time}\t\t"
-            f"{set_color(BLUE, 'LAST REFRESH:')} {datetime.now()}\n"
-            f"{set_color(GREEN, 'TOTAL QUERIES:')} {set_color(RED, self.packets.total())}\n"
-        )
+        print("DNSTrace v0.1.0")
+        printer.info("START TIME: ", raw_text=f"{self.start_time}", end="\t\t")
+        printer.info("LAST REFRESH: ", raw_text=f"{datetime.now()}")
+        printer.info("TOTAL QUERIES: ", raw_text=f"{self.packets.total()}")
 
         for q_type in self.query_types.keys():
-            print(f"{set_color(MAGENTA, '~')} ", end="")
-            print(f"{q_type} QUERIES: {set_color(BLUE, self.query_types[q_type])}", end="")
-            print(f"{set_color(MAGENTA, ' ~  ')}", end="")
+            printer.cprint("~ ", color="magenta", raw_text=f"{q_type} QUERIES: ", end="")
+            printer.cprint(f"{self.query_types[q_type]}", color="blue", end="")
+            printer.cprint(" ~  ", color="magenta", end="")
         else:
             print("\n")
 
-        print(
-            f"| {set_color(GREEN, 'Process'):^30} | {set_color(BLUE, 'Interface'):^21} | "
-            f"{set_color(MAGENTA, 'IP Version'):^20} | {set_color(MAGENTA, 'Protocol'):^8} | "
-            f"{set_color(YELLOW, 'Source IP'):^24} | {set_color(YELLOW, 'Destination IP'):^24} | "
-            f"{set_color(CYAN, 'Query Type'):^10} | {set_color(MAGENTA, 'Count'):^5} |"
-        )
-        print("-" * 122)
+        for title, color, width in TABLE_HEADERS:
+            print(f"| {printer.cformat(title, color):^{width}}", end=" ")
+        print("|")
 
         for (ps_name, if_name, ip_ver, ip_proto, ip_src, ip_dst, q_type), count in self.packets.most_common():
             print(
-                f"| {ps_name:^21} | {if_name:^12} | {ip_ver:^11} | {ip_proto:^8} |"
-                f" {ip_src:^15} | {ip_dst:^15} | {q_type:^10} | {count:^5} |"
+                f"| {ps_name:^21} | {if_name:^12} | {ip_ver:^11} | {ip_proto:^8} | {ip_src:^15} | {ip_dst:^15} "
+                f"| {q_type:^10} | {count:^5} |"
             )
 
     def display_dns_event(self, cpu: int, data: int, size: int) -> None:
