@@ -39,13 +39,18 @@ except ImportError:
 
 
 class DnsTrace:
-    def __init__(self, bpf_kprobe: bytes, bpf_sock: bytes, tail_mode: bool = False) -> None:
+    def __init__(self, bpf_kprobe: bytes, bpf_sock: bytes, tail_mode: bool = False, show_domain: bool = False) -> None:
         self.bpf_kprobe = BPF(text=bpf_kprobe)
         self.bpf_sock = BPF(text=bpf_sock)
         self.packets: Counter = Counter()
         self.query_types: Counter = Counter()
-        self.start_time = datetime.now()
+        self.start_time = datetime.now().strftime("%H:%M:%S")
         self.tail_mode = tail_mode
+        self.show_domain = show_domain
+
+    @property
+    def timestamp(self) -> str:
+        return datetime.now().strftime("%H:%M:%S")
 
     @staticmethod
     def create_skb_event(size: int) -> type[ct.Structure]:
@@ -59,8 +64,7 @@ class DnsTrace:
 
         return SkbEvent
 
-    @staticmethod
-    def parse_packet(raw: bytes) -> tuple:
+    def parse_packet(self, raw: bytes) -> tuple:
         # Skip Ethernet header
         ip_packet = raw[ETH_LENGTH:]
 
@@ -87,13 +91,19 @@ class DnsTrace:
         dns_data = DNSRecord.parse(dns_packet)
         is_query = True if dns_data.header.qr == 0 else False
         query_type = QTYPE.get(dns_data.q.qtype, f"{dns_data.q.qtype}")
-        return IP_VERSIONS[ip_version], DNS_PROTOCOLS[ip_protocol], ip_src, ip_dst, query_type, is_query
+
+        if self.show_domain and is_query:
+            domain = str(dns_data.q.qname).rstrip(".")
+        else:
+            domain = ""
+
+        return IP_VERSIONS[ip_version], DNS_PROTOCOLS[ip_protocol], ip_src, ip_dst, query_type, is_query, domain
 
     def print_stats(self) -> None:
         os.system("clear")
         print("DNSTrace v0.1.0")
-        printer.info("START TIME: ", raw_text=f"{self.start_time}", end="\t\t")
-        printer.info("LAST REFRESH: ", raw_text=f"{datetime.now()}")
+        printer.info("START TIME: ", raw_text=f"{self.start_time}", end="\t")
+        printer.info("LAST REFRESH: ", raw_text=f"{self.timestamp}", end="\t")
         printer.info("TOTAL QUERIES: ", raw_text=f"{self.packets.total()}")
 
         for q_type in self.query_types.keys():
@@ -107,7 +117,7 @@ class DnsTrace:
             print(f"| {printer.cformat(title, color):^{width}}", end=" ")
         print("|")
 
-        for (ps_name, if_name, ip_ver, ip_proto, ip_src, ip_dst, q_type), count in self.packets.most_common():
+        for (ps_name, if_name, ip_ver, ip_proto, ip_src, ip_dst, q_type, domain), count in self.packets.most_common():
             print(
                 f"| {ps_name:^21} | {if_name:^12} | {ip_ver:^11} | {ip_proto:^8} | {ip_src:^15} | {ip_dst:^15} "
                 f"| {q_type:^10} | {count:^5} |"
@@ -127,13 +137,13 @@ class DnsTrace:
                 proc_name = "?"
 
         if_name = socket.if_indextoname(sk.ifindex)
-        ip_version, ip_proto, ip_src, ip_dst, query_type, is_query = self.parse_packet(bytes(sk.raw))
+        ip_version, ip_proto, ip_src, ip_dst, query_type, is_query, domain = self.parse_packet(bytes(sk.raw))
+
         if is_query:
             if self.tail_mode:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                print(f"{timestamp}: query[{query_type}] {proc_name} from {ip_src}")
+                print(f"{self.timestamp}: query[{query_type}] {proc_name} ({domain}) from {ip_src}")
             else:
-                key = (proc_name, if_name, ip_version, ip_proto, ip_src, ip_dst, query_type)
+                key = (proc_name, if_name, ip_version, ip_proto, ip_src, ip_dst, query_type, domain)
                 self.packets[key] += 1
                 self.query_types[query_type] += 1
                 self.print_stats()
@@ -145,7 +155,7 @@ class DnsTrace:
         self.bpf_sock[b"dns_event_outputs"].open_perf_buffer(self.display_dns_event)
 
         if self.tail_mode:
-            print("Press Ctrl+C to exit\n")
+            print("Press Ctrl+C to exit")
         else:
             self.print_stats()
 
