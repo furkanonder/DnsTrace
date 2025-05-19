@@ -15,16 +15,18 @@ DNS_PROTOCOLS = {17: "UDP", 6: "TCP"}
 IP_VERSIONS = {4: "IPv4"}
 ETH_LENGTH = 14
 
-TABLE_HEADERS = [
-    ("Process", "green", 30),
-    ("Interface", "blue", 21),
-    ("IP Version", "magenta", 20),
-    ("Protocol", "magenta", 8),
-    ("Source IP", "yellow", 24),
-    ("Destination IP", "yellow", 24),
-    ("Query Type", "cyan", 10),
-    ("Count", "magenta", 5),
-]
+FIELD_MAP = {
+    "Process": (0, "green", 18, "center"),
+    "Interface": (1, "blue", 10, "center"),
+    "IP Ver": (2, "magenta", 8, "center"),
+    "Proto": (3, "magenta", 5, "center"),
+    "Source IP": (4, "yellow", 14, "center"),
+    "Dest IP": (5, "yellow", 14, "center"),
+    "QType": (6, "cyan", 6, "center"),
+    "Domain": (7, "white", 24, "center"),
+    "Count": ("count", "magenta", 6, "center"),
+}
+
 
 try:
     version = sys.version_info
@@ -47,10 +49,28 @@ class DnsTrace:
         self.start_time = datetime.now().strftime("%H:%M:%S")
         self.tail_mode = tail_mode
         self.show_domain = show_domain
+        self.columns = self.initialize_columns()
+
+    def initialize_columns(self):
+        columns = ["Process", "Interface", "IP Ver", "Proto", "Source IP", "Dest IP", "QType", "Count"]
+        if self.show_domain:
+            columns.insert(5, "Domain")
+        return columns
 
     @property
     def timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
+
+    @staticmethod
+    def format_cell(value: str, color: str, width: int, align: str) -> str:
+        truncated = (value[: width - 3] + "...") if len(value) > width else value
+        if align == "left":
+            content = truncated.ljust(width)
+        elif align == "right":
+            content = truncated.rjust(width)
+        else:
+            content = truncated.center(width)
+        return printer.cformat(content, color)
 
     @staticmethod
     def create_skb_event(size: int) -> type[ct.Structure]:
@@ -91,17 +111,13 @@ class DnsTrace:
         dns_data = DNSRecord.parse(dns_packet)
         is_query = True if dns_data.header.qr == 0 else False
         query_type = QTYPE.get(dns_data.q.qtype, f"{dns_data.q.qtype}")
-
-        if self.show_domain and is_query:
-            domain = str(dns_data.q.qname).rstrip(".")
-        else:
-            domain = ""
+        domain = str(dns_data.q.qname).rstrip(".") if self.show_domain and is_query else ""
 
         return IP_VERSIONS[ip_version], DNS_PROTOCOLS[ip_protocol], ip_src, ip_dst, query_type, is_query, domain
 
     def print_stats(self) -> None:
         os.system("clear")
-        print("DNSTrace v0.1.0")
+        print("DNSTrace [v0.1.0]")
         printer.info("START TIME: ", raw_text=f"{self.start_time}", end="\t")
         printer.info("LAST REFRESH: ", raw_text=f"{self.timestamp}", end="\t")
         printer.info("TOTAL QUERIES: ", raw_text=f"{self.packets.total()}")
@@ -113,15 +129,16 @@ class DnsTrace:
         else:
             print("\n")
 
-        for title, color, width in TABLE_HEADERS:
-            print(f"| {printer.cformat(title, color):^{width}}", end=" ")
-        print("|")
+        headers = [self.format_cell(col, *FIELD_MAP[col][1:]) for col in self.columns]
+        print(f"│ {' │ '.join(headers)} │")
 
-        for (ps_name, if_name, ip_ver, ip_proto, ip_src, ip_dst, q_type, domain), count in self.packets.most_common():
-            print(
-                f"| {ps_name:^21} | {if_name:^12} | {ip_ver:^11} | {ip_proto:^8} | {ip_src:^15} | {ip_dst:^15} "
-                f"| {q_type:^10} | {count:^5} |"
-            )
+        for key, count in self.packets.most_common():
+            row = []
+            for col in self.columns:
+                idx, color, width, align = FIELD_MAP[col]
+                value = count if col == "Count" else key[idx]
+                row.append(self.format_cell(f"{value}", color, width, align))
+            print(f"│ {' │ '.join(row)} │")
 
     def display_dns_event(self, cpu: int, data: int, size: int) -> None:
         skb_event = self.create_skb_event(size)
