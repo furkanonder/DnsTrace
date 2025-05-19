@@ -158,7 +158,7 @@ class DnsTrace:
 
         if is_query:
             if self.tail_mode:
-                print(f"{self.timestamp}: query[{query_type}] {proc_name} ({domain}) from {ip_src}")
+                print(f"{self.timestamp}: query[{query_type}/{ip_proto}] {proc_name} ({domain}) from {ip_src}")
             else:
                 key = (proc_name, if_name, ip_version, ip_proto, ip_src, ip_dst, query_type, domain)
                 self.packets[key] += 1
