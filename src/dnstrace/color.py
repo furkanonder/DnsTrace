@@ -91,8 +91,8 @@ class ColorPrinter:
             print(text, end=end)
 
     @staticmethod
-    def cformat(text: str, color: Optional[str] = COLORS["white"]) -> str:
-        return f"{COLORS[color]}{text}{COLORS['reset']}"
+    def cformat(text: str, color: Optional[str] = COLORS["white"], raw_text: str = "") -> str:
+        return f"{COLORS[color]}{text}{COLORS['reset']}{raw_text}"
 
     def success(self, text: str, raw_text: str = "", end: str = "\n") -> None:
         self.cprint(text, "green", raw_text, end=end)
