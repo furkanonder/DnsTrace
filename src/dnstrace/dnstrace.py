@@ -1,5 +1,6 @@
 import ctypes as ct
 import os
+import re
 import site
 import socket
 import struct
@@ -53,6 +54,7 @@ class DnsTrace:
         self.columns = self.initialize_columns()
         self.col_configs = {col: FIELD_MAP[col][1:] for col in self.columns}
         self.column_bases = ["─" * (cfg[1] + 2) for cfg in self.col_configs.values()]
+        self.table_width = sum(cfg[1] + 3 for cfg in self.col_configs.values()) - 1
 
     def initialize_columns(self):
         columns = ["Process", "Interface", "IP Ver", "Proto", "Source IP", "Dest IP", "QType", "Count"]
@@ -74,6 +76,12 @@ class DnsTrace:
         else:
             content = truncated.center(width)
         return printer.cformat(content, color)
+
+    def center_print(self, content: str, color: str = None):
+        visible = len(re.sub(r"\x1b\[[0-9;]*m", "", content))
+        padding = (self.table_width - visible) // 2
+        formatted_content = printer.cformat(content, color) if color else content
+        print(f"{' ' * padding}{formatted_content}")
 
     @staticmethod
     def create_skb_event(size: int) -> type[ct.Structure]:
@@ -120,16 +128,19 @@ class DnsTrace:
 
     def print_stats(self) -> None:
         os.system("cls" if os.name == "nt" else "clear")
-        print("DNSTrace [v0.1.0]")
-        printer.info("Started: ", raw_text=f"{self.start_time}", end="\t")
-        printer.info("Updated: ", raw_text=f"{self.timestamp}", end="\t")
-        printer.info("Total Queries: ", raw_text=f"{self.packets.total()}")
+        # Header
+        self.center_print("DNSTrace [v0.1.0]", "cyan")
+        self.center_print(
+            f"{printer.cformat(f'Started: {self.start_time}', 'blue')}  "
+            f"{printer.cformat(f'Updated: {self.timestamp}', 'yellow')}  "
+            f"{printer.cformat(f'Total: {self.packets.total()}', 'green')}"
+        )
 
         # Query Type Distribution
         type_chart = []
         total = max(1, sum(self.query_types.values()))
-        for query_type, count in self.query_types.most_common(10):
-            bar = "█" * int((count / total) * QUERY_TYPE_DISTRIBUTION_MAX_WIDTH)
+        for query_type, count in self.query_types.most_common():
+            bar = f"{'█' * int((count / total) * QUERY_TYPE_DISTRIBUTION_MAX_WIDTH)}"
             type_chart.append(
                 f"{self.format_cell(query_type, 'cyan', 8, 'left')} "
                 f"{self.format_cell(bar, 'magenta', QUERY_TYPE_DISTRIBUTION_MAX_WIDTH, 'left')} "
