@@ -26,6 +26,7 @@ FIELD_MAP = {
     "Domain": (7, "white", 24, "center"),
     "Count": ("count", "magenta", 6, "center"),
 }
+QUERY_TYPE_DISTRIBUTION_MAX_WIDTH = 20
 
 
 try:
@@ -50,11 +51,13 @@ class DnsTrace:
         self.tail_mode = tail_mode
         self.show_domain = show_domain
         self.columns = self.initialize_columns()
+        self.col_configs = {col: FIELD_MAP[col][1:] for col in self.columns}
+        self.column_bases = ["─" * (cfg[1] + 2) for cfg in self.col_configs.values()]
 
     def initialize_columns(self):
         columns = ["Process", "Interface", "IP Ver", "Proto", "Source IP", "Dest IP", "QType", "Count"]
         if self.show_domain:
-            columns.insert(5, "Domain")
+            columns.insert(6, "Domain")
         return columns
 
     @property
@@ -116,22 +119,33 @@ class DnsTrace:
         return IP_VERSIONS[ip_version], DNS_PROTOCOLS[ip_protocol], ip_src, ip_dst, query_type, is_query, domain
 
     def print_stats(self) -> None:
-        os.system("clear")
+        os.system("cls" if os.name == "nt" else "clear")
         print("DNSTrace [v0.1.0]")
-        printer.info("START TIME: ", raw_text=f"{self.start_time}", end="\t")
-        printer.info("LAST REFRESH: ", raw_text=f"{self.timestamp}", end="\t")
-        printer.info("TOTAL QUERIES: ", raw_text=f"{self.packets.total()}")
+        printer.info("Started: ", raw_text=f"{self.start_time}", end="\t")
+        printer.info("Updated: ", raw_text=f"{self.timestamp}", end="\t")
+        printer.info("Total Queries: ", raw_text=f"{self.packets.total()}")
 
-        for q_type in self.query_types.keys():
-            printer.cprint("~ ", color="magenta", raw_text=f"{q_type} QUERIES: ", end="")
-            printer.cprint(f"{self.query_types[q_type]}", color="blue", end="")
-            printer.cprint(" ~  ", color="magenta", end="")
-        else:
-            print("\n")
+        # Query Type Distribution
+        type_chart = []
+        total = max(1, sum(self.query_types.values()))
+        for query_type, count in self.query_types.most_common(10):
+            bar = "█" * int((count / total) * QUERY_TYPE_DISTRIBUTION_MAX_WIDTH)
+            type_chart.append(
+                f"{self.format_cell(query_type, 'cyan', 8, 'left')} "
+                f"{self.format_cell(bar, 'magenta', QUERY_TYPE_DISTRIBUTION_MAX_WIDTH, 'left')} "
+                f"{self.format_cell(str(count), 'blue', 6, 'right')}"
+            )
+        print(f"\n{'\n'.join(type_chart)}\n")
 
-        headers = [self.format_cell(col, *FIELD_MAP[col][1:]) for col in self.columns]
+        # Table Headers
+        print(f"┌{'┬'.join(self.column_bases)}┐")
+        headers = [self.format_cell(col, *self.col_configs[col]) for col in self.columns]
         print(f"│ {' │ '.join(headers)} │")
 
+        # Section Separator
+        print(f"├{'┼'.join(self.column_bases)}┤")
+
+        # Table Body
         for key, count in self.packets.most_common():
             row = []
             for col in self.columns:
@@ -139,6 +153,9 @@ class DnsTrace:
                 value = count if col == "Count" else key[idx]
                 row.append(self.format_cell(f"{value}", color, width, align))
             print(f"│ {' │ '.join(row)} │")
+
+        # Footer
+        print(f"└{'┴'.join(self.column_bases)}┘")
 
     def display_dns_event(self, cpu: int, data: int, size: int) -> None:
         skb_event = self.create_skb_event(size)
