@@ -253,7 +253,12 @@ class DnsTrace:
 
         if is_query:
             if self.tail_mode:
-                print(f"{self.timestamp}: query[{query_type}/{ip_proto}] {proc_name} ({domain}) from {ip_src}")
+                print(
+                    f"{printer.cformat(f'{self.timestamp}:', 'blue')} "
+                    f"{printer.cformat(f'query[{query_type}/{ip_proto}]', 'cyan')} "
+                    f"{printer.cformat(f'{proc_name}{f" ({domain})" if self.show_domain else ""}', 'green')} "
+                    f"{printer.cformat(f'from {ip_src}', 'yellow')}"
+                )
             else:
                 key = (proc_name, if_name, ip_version, ip_proto, ip_src, ip_dst, query_type, domain)
                 self.packets[key] += 1
