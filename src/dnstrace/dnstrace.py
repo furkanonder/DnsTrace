@@ -96,31 +96,98 @@ class DnsTrace:
         return SkbEvent
 
     def parse_packet(self, raw: bytes) -> tuple:
-        # Skip Ethernet header
+        # Skip Ethernet header (14 bytes) - ([0-5]: Destination MAC, [6-11]: Source MAC, [12-13]: EtherType)
         ip_packet = raw[ETH_LENGTH:]
 
+        # Unpack IPv4 header using big-endian format
+        # Format string "!BBHHHBBH4s4s" breakdown:
+        #   !  : Network byte order (big-endian)
+        #   B  : 1-byte unsigned char (8 bits)
+        #   H  : 2-byte unsigned short (16 bits)
+        #   4s : 4-byte byte string
+        #
+        # IPv4 Header Structure (20 bytes):
+        #  0                   1                   2                   3
+        #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |Version|  IHL  |    DSCP/ECN   |         Total Length          | <- B B H
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |         Identification        |Flags|   Fragment Offset       | <- H H
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |  Time to Live |   Protocol    |       Header Checksum         | <- B B H
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                       Source Address                          | <- 4s
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                    Destination Address                        | <- 4s
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        #
+        # Field mapping to unpacked tuple:
+        #   [0]: Byte 0 (Version/IHL)  -> B
+        #   [1]: Byte 1 (TOS)          -> B
+        #   [2]: Bytes 2-3 (Total Len) -> H
+        #   [3]: Bytes 4-5 (ID)        -> H
+        #   [4]: Bytes 6-7 (Flags/Frag)-> H
+        #   [5]: Byte 8 (TTL)          -> B
+        #   [6]: Byte 9 (Protocol)     -> B
+        #   [7]: Bytes 10-11 (Checksum)-> H
+        #   [8]: Bytes 12-15 (Src IP)  -> 4s
+        #   [9]: Bytes 16-19 (Dst IP)  -> 4s
         ip_header = struct.unpack("!BBHHHBBH4s4s", ip_packet[:20])
+
+        # Extract protocol number
         ip_protocol = ip_header[6]
+        # Extract IP version (upper 4 bits of first byte)
         ip_version = ip_header[0] >> 4
-        ip_src = socket.inet_ntoa(ip_header[8])
-        ip_dst = socket.inet_ntoa(ip_header[9])
-        header_len = ip_header[0] & 0x0F
-        # Calculate header length in bytes
-        header_len = header_len * 4
 
-        # UDP
+        # Convert binary IP addresses to string format
+        ip_src = socket.inet_ntoa(ip_header[8])  # Bytes 12-15: Source IP
+        ip_dst = socket.inet_ntoa(ip_header[9])  # Bytes 16-19: Destination IP
+
+        # Calculate IP header length (IHL field in 32-bit words)
+        header_len = ip_header[0] & 0x0F  # Get IHL (lower 4 bits of first byte)
+        header_len = header_len * 4  # Convert to bytes
+
+        # Process UDP packets (DNS over UDP)
         if ip_protocol == 17:
-            udp_packet = ip_packet[header_len:]
+            # UDP Header Structure (8 bytes) - RFC 768:
+            #  0                   1                   2                   3
+            # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            # |          Source Port          |       Destination Port        |
+            # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            # |            Length             |           Checksum            |
+            udp_packet = ip_packet[header_len:]  # Skip IP header
+            # Skip UDP header - [Src Port (2)] [Dst Port (2)] [Length (2)] [Checksum (2)]
             dns_packet = udp_packet[8:]
-        # TCP
+        # Process TCP packets (DNS over TCP)
         elif ip_protocol == 6:
+            # Skip IP header to get TCP packet
             tcp_packet = ip_packet[header_len:]
-            tcp_header_len = tcp_packet[12] >> 4
-            tcp_header_len = tcp_header_len * 4 + 2
-            dns_packet = tcp_packet[tcp_header_len:]
 
+            # TCP Header Structure (20 bytes minimum):
+            #  0                   1                   2                   3
+            # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            # |          Source Port          |       Destination Port        |
+            # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            # |                        Sequence Number                       |
+            # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            # |                     Acknowledgment Number                     |
+            # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            # |  Data |           |U|A|P|R|S|F|
+            # | Offset| Reserved  |R|C|S|S|Y|I|            Window
+            # |       |           |G|K|H|T|N|N|
+            # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+            # Data Offset (TCP header length) is in upper 4 bits of byte 12
+            tcp_header_len = (tcp_packet[12] >> 4) * 4  # Convert 32-bit words to bytes
+            dns_packet = tcp_packet[tcp_header_len:]  # Skip TCP header
+
+            # DNS-over-TCP has 2-byte length prefix before the actual DNS message - RFC 1035 Section 4.2.2: "TCP usage"
+            if len(dns_packet) >= 2:
+                dns_packet = dns_packet[2:]  # Skip the 2-byte length prefix
+
+        # Parse DNS payload
         dns_data = DNSRecord.parse(dns_packet)
-        is_query = True if dns_data.header.qr == 0 else False
+        is_query = dns_data.header.qr == 0  # QR bit: 0=Query, 1=Response
         query_type = QTYPE.get(dns_data.q.qtype, f"{dns_data.q.qtype}")
         domain = str(dns_data.q.qname).rstrip(".") if self.show_domain and is_query else ""
 
