@@ -22,6 +22,7 @@ def main():
         print("Error: This tool requires root privileges. Please run with sudo.", file=sys.stderr)
         sys.exit(1)
 
+    print("dnstrace is initializing...")
     try:
         with open(os.path.join(CUR_DIR, "bpf_kprobe.c"), "rb") as f:
             bpf_kprobe = f.read()

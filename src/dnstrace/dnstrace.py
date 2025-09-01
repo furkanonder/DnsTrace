@@ -1,10 +1,13 @@
+import contextlib
 import ctypes as ct
 import os
 import re
+import signal
 import site
 import socket
 import struct
 import sys
+import time
 from collections import Counter
 from datetime import datetime
 
@@ -16,7 +19,7 @@ DNS_PROTOCOLS = {17: "UDP", 6: "TCP"}
 IP_VERSIONS = {4: "IPv4"}
 ETH_LENGTH = 14
 
-FIELD_MAP = {
+FIELD_MAP_FULL = {
     "Process": (0, "green", 18, "center"),
     "Interface": (1, "blue", 10, "center"),
     "IP Ver": (2, "magenta", 8, "center"),
@@ -27,6 +30,19 @@ FIELD_MAP = {
     "Domain": (7, "white", 24, "center"),
     "Count": ("count", "magenta", 6, "center"),
 }
+
+FIELD_MAP_COMPACT = {
+    "Process": (0, "green", 10, "center"),
+    "Proto": (3, "magenta", 5, "center"),
+    "Source IP": (4, "yellow", 15, "center"),
+    "Dest IP": (5, "yellow", 15, "center"),
+    "QType": (6, "cyan", 5, "center"),
+    "Count": ("count", "magenta", 5, "center"),
+}
+
+MIN_TERMINAL_WIDTH = 80
+MIN_TERMINAL_HEIGHT = 24
+SMALL_SCREEN_WIDTH = 110
 QUERY_TYPE_DISTRIBUTION_MAX_WIDTH = 20
 
 
@@ -51,20 +67,26 @@ class DnsTrace:
         self.start_time = datetime.now().strftime("%H:%M:%S")
         self.tail_mode = tail_mode
         self.show_domain = show_domain
-        self.columns = self.initialize_columns()
-        self.col_configs = {col: FIELD_MAP[col][1:] for col in self.columns}
-        self.column_bases = ["─" * (cfg[1] + 2) for cfg in self.col_configs.values()]
-        self.table_width = sum(cfg[1] + 3 for cfg in self.col_configs.values()) - 1
-
-    def initialize_columns(self):
-        columns = ["Process", "Interface", "IP Ver", "Proto", "Source IP", "Dest IP", "QType", "Count"]
-        if self.show_domain:
-            columns.insert(6, "Domain")
-        return columns
+        self.terminal_size_valid = True
+        self._setup_signal_handlers()
+        self._update_column_configuration()
 
     @property
     def timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
+
+    @staticmethod
+    def clear_screen() -> None:
+        os.system("cls" if os.name == "nt" else "clear")
+
+    @staticmethod
+    def get_terminal_size() -> tuple[int, int]:
+        try:
+            size = os.get_terminal_size()
+            return size.columns, size.lines
+        except (OSError, AttributeError):
+            with contextlib.suppress(ValueError, TypeError):
+                return 80, 24
 
     @staticmethod
     def format_cell(value: str, color: str, width: int, align: str) -> str:
@@ -77,11 +99,63 @@ class DnsTrace:
             content = truncated.center(width)
         return printer.cformat(content, color)
 
+    def initialize_columns(self, field_map=None):
+        if field_map is None:
+            field_map = FIELD_MAP_FULL
+        columns = list(field_map.keys())
+        if not self.show_domain and "Domain" in columns:
+            columns.remove("Domain")
+        return columns
+
+    def _update_column_configuration(self):
+        width, _ = self.get_terminal_size()
+        if width < SMALL_SCREEN_WIDTH:
+            self.field_map = FIELD_MAP_COMPACT
+        else:
+            self.field_map = FIELD_MAP_FULL
+        self.columns = self.initialize_columns(self.field_map)
+        self.col_configs = {col: self.field_map[col][1:] for col in self.columns}
+        self.column_bases = ["─" * (cfg[1] + 2) for cfg in self.col_configs.values()]
+        self.table_width = sum(cfg[1] + 3 for cfg in self.col_configs.values()) - 1
+
+    def _signal_handler(self, signum: int, frame) -> None:
+        if signum == signal.SIGWINCH:
+            self.terminal_size_valid = self.check_terminal_size()
+            if self.terminal_size_valid:
+                self._update_column_configuration()
+                if not self.tail_mode:
+                    self.print_stats()
+            else:
+                self.display_terminal_size_error()
+
+    def _setup_signal_handlers(self) -> None:
+        signal.signal(signal.SIGWINCH, self._signal_handler)
+
+    def check_terminal_size(self) -> bool:
+        width, height = self.get_terminal_size()
+        return width >= MIN_TERMINAL_WIDTH and height >= MIN_TERMINAL_HEIGHT
+
+    def display_terminal_size_error(self) -> None:
+        self.clear_screen()
+        printer.error("Terminal size too small:")
+        width, height = self.get_terminal_size()
+        print(f"Current: Width = {width} Height = {height}")
+        print(f"\nNeeded for current config:\nWidth = {MIN_TERMINAL_WIDTH} Height = {MIN_TERMINAL_HEIGHT}")
+        printer.warning("Please resize your terminal window and try again.")
+
     def center_print(self, content: str, color: str = None):
         visible = len(re.sub(r"\x1b\[[0-9;]*m", "", content))
-        padding = (self.table_width - visible) // 2
+        terminal_width, _ = self.get_terminal_size()
+        padding = (terminal_width - visible) // 2
         formatted_content = printer.cformat(content, color) if color else content
         print(f"{' ' * padding}{formatted_content}")
+
+    def center_table(self, content: str):
+        terminal_width, _ = self.get_terminal_size()
+        # Remove ANSI color codes to get actual visible length
+        visible_length = len(re.sub(r"\x1b\[[0-9;]*m", "", content))
+        padding = max(0, (terminal_width - visible_length) // 2)
+        return f"{' ' * padding}{content}"
 
     @staticmethod
     def create_skb_event(size: int) -> type[ct.Structure]:
@@ -194,7 +268,9 @@ class DnsTrace:
         return IP_VERSIONS[ip_version], DNS_PROTOCOLS[ip_protocol], ip_src, ip_dst, query_type, is_query, domain
 
     def print_stats(self) -> None:
-        os.system("cls" if os.name == "nt" else "clear")
+        if not self.terminal_size_valid:
+            return
+        self.clear_screen()
         # Header
         self.center_print("DNSTrace [v0.1.0]", "cyan")
         self.center_print(
@@ -204,36 +280,44 @@ class DnsTrace:
         )
 
         # Query Type Distribution
-        type_chart = []
-        total = max(1, sum(self.query_types.values()))
-        for query_type, count in self.query_types.most_common():
-            bar = f"{'█' * int((count / total) * QUERY_TYPE_DISTRIBUTION_MAX_WIDTH)}"
-            type_chart.append(
-                f"{self.format_cell(query_type, 'cyan', 8, 'left')} "
-                f"{self.format_cell(bar, 'magenta', QUERY_TYPE_DISTRIBUTION_MAX_WIDTH, 'left')} "
-                f"{self.format_cell(str(count), 'blue', 6, 'right')}"
-            )
-        print(f"\n{'\n'.join(type_chart)}\n")
+        if self.query_types:
+            type_chart = []
+            total = max(1, sum(self.query_types.values()))
+            for query_type, count in self.query_types.most_common():
+                bar = f"{'█' * int((count / total) * QUERY_TYPE_DISTRIBUTION_MAX_WIDTH)}"
+                chart_line = (
+                    f"{self.format_cell(query_type, 'cyan', 8, 'left')} "
+                    f"{self.format_cell(bar, 'magenta', QUERY_TYPE_DISTRIBUTION_MAX_WIDTH, 'left')} "
+                    f"{self.format_cell(str(count), 'blue', 6, 'right')}"
+                )
+                type_chart.append(self.center_table(chart_line))
+            print(f"\n{'\n'.join(type_chart)}\n")
 
+        table_lines = []
         # Table Headers
-        print(f"┌{'┬'.join(self.column_bases)}┐")
+        table_top = f"┌{'┬'.join(self.column_bases)}┐"
+        table_lines.append(table_top)
         headers = [self.format_cell(col, *self.col_configs[col]) for col in self.columns]
-        print(f"│ {' │ '.join(headers)} │")
-
+        table_header = f"│ {' │ '.join(headers)} │"
+        table_lines.append(table_header)
         # Section Separator
-        print(f"├{'┼'.join(self.column_bases)}┤")
-
+        table_separator = f"├{'┼'.join(self.column_bases)}┤"
+        table_lines.append(table_separator)
         # Table Body
         for key, count in self.packets.most_common():
             row = []
             for col in self.columns:
-                idx, color, width, align = FIELD_MAP[col]
+                idx, color, width, align = self.field_map[col]
                 value = count if col == "Count" else key[idx]
                 row.append(self.format_cell(f"{value}", color, width, align))
-            print(f"│ {' │ '.join(row)} │")
-
+            table_row = f"│ {' │ '.join(row)} │"
+            table_lines.append(table_row)
         # Footer
-        print(f"└{'┴'.join(self.column_bases)}┘")
+        table_bottom = f"└{'┴'.join(self.column_bases)}┘"
+        table_lines.append(table_bottom)
+
+        for line in table_lines:
+            print(self.center_table(line))
 
     def display_dns_event(self, cpu: int, data: int, size: int) -> None:
         skb_event = self.create_skb_event(size)
@@ -266,6 +350,10 @@ class DnsTrace:
                 self.print_stats()
 
     def start(self) -> None:
+        self.terminal_size_valid = self.check_terminal_size()
+        if not self.terminal_size_valid:
+            self.display_terminal_size_error()
+            return
         self.bpf_kprobe.attach_kprobe(event=b"tcp_sendmsg", fn_name=b"trace_sendmsg")
         self.bpf_kprobe.attach_kprobe(event=b"udp_sendmsg", fn_name=b"trace_sendmsg")
         BPF.attach_raw_socket(self.bpf_sock.load_func(b"dns_filter", BPF.SOCKET_FILTER), b"")
@@ -278,6 +366,9 @@ class DnsTrace:
 
         while True:
             try:
-                self.bpf_sock.perf_buffer_poll()
+                if self.terminal_size_valid:
+                    self.bpf_sock.perf_buffer_poll()
+                else:
+                    time.sleep(0.1)
             except KeyboardInterrupt:
                 sys.exit()
