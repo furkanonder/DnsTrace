@@ -7,7 +7,6 @@ import site
 import socket
 import struct
 import sys
-import time
 from collections import Counter
 from datetime import datetime
 
@@ -67,9 +66,10 @@ class DnsTrace:
         self.start_time = datetime.now().strftime("%H:%M:%S")
         self.tail_mode = tail_mode
         self.show_domain = show_domain
-        self.terminal_size_valid = True
-        self._setup_signal_handlers()
-        self._update_column_configuration()
+        if not self.tail_mode:
+            self.terminal_size_valid = self.check_terminal_size()
+            self._setup_signal_handlers()
+            self._update_column_configuration()
 
     @property
     def timestamp(self) -> str:
@@ -120,11 +120,9 @@ class DnsTrace:
 
     def _signal_handler(self, signum: int, frame) -> None:
         if signum == signal.SIGWINCH:
-            self.terminal_size_valid = self.check_terminal_size()
-            if self.terminal_size_valid:
+            if self.check_terminal_size():
                 self._update_column_configuration()
-                if not self.tail_mode:
-                    self.print_stats()
+                self.print_stats()
             else:
                 self.display_terminal_size_error()
 
@@ -268,8 +266,6 @@ class DnsTrace:
         return IP_VERSIONS[ip_version], DNS_PROTOCOLS[ip_protocol], ip_src, ip_dst, query_type, is_query, domain
 
     def print_stats(self) -> None:
-        if not self.terminal_size_valid:
-            return
         self.clear_screen()
         # Header
         self.center_print("DNSTrace [v0.1.0]", "cyan")
@@ -350,8 +346,7 @@ class DnsTrace:
                 self.print_stats()
 
     def start(self) -> None:
-        self.terminal_size_valid = self.check_terminal_size()
-        if not self.terminal_size_valid:
+        if not self.tail_mode and not self.check_terminal_size():
             self.display_terminal_size_error()
             return
         self.bpf_kprobe.attach_kprobe(event=b"tcp_sendmsg", fn_name=b"trace_sendmsg")
@@ -360,15 +355,13 @@ class DnsTrace:
         self.bpf_sock[b"dns_event_outputs"].open_perf_buffer(self.display_dns_event)
 
         if self.tail_mode:
+            self.clear_screen()
             print("Press Ctrl+C to exit")
         else:
             self.print_stats()
 
         while True:
             try:
-                if self.terminal_size_valid:
-                    self.bpf_sock.perf_buffer_poll()
-                else:
-                    time.sleep(0.1)
+                self.bpf_sock.perf_buffer_poll()
             except KeyboardInterrupt:
                 sys.exit()
