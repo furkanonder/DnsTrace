@@ -1,8 +1,10 @@
 import os
+from pathlib import Path
 import select
 import shutil
 import subprocess
 import time
+from typing import ClassVar
 
 import pytest
 
@@ -11,8 +13,8 @@ import pytest
 @pytest.mark.skipif(not shutil.which("ip"), reason="Test requires ip tool")
 @pytest.mark.skipif(not shutil.which("dig"), reason="Test requires dig tool")
 class TestDnsTraceIntegration:
-    TIMEOUT = 2
-    TEST_CASES = [
+    TIMEOUT: ClassVar[int] = 2
+    TEST_CASES: ClassVar[list[tuple[str, str, str]]] = [
         ("localhost", "A", "udp"),
         ("example.com", "A", "tcp"),
         ("google.com", "AAAA", "udp"),
@@ -21,7 +23,7 @@ class TestDnsTraceIntegration:
 
     @pytest.fixture(scope="class")
     def dns_server(self):
-        with open("/etc/resolv.conf") as f:
+        with Path("/etc/resolv.conf").open() as f:
             servers = [line.split()[1] for line in f if line.startswith("nameserver")]
             if not servers:
                 pytest.skip("No DNS servers configured")
@@ -89,5 +91,5 @@ class TestDnsTraceIntegration:
             f"DNS {protocol.upper()} query not detected\n"
             f"Expected: {expected_marker} and {domain_marker}\n"
             f"Output buffer:\n{buffer}\n"
-            f"Errors:\n{dnstrace_process.stderr.read()}"
+            f"Errors:\n{dnstrace_process.stderr.read()}",
         )
