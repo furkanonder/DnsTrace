@@ -1,20 +1,23 @@
-import contextlib
+from collections import Counter
 import ctypes as ct
+from datetime import datetime, timezone
 import os
+from pathlib import Path
 import re
 import signal
 import site
 import socket
 import struct
 import sys
-from collections import Counter
-from datetime import datetime
+from typing import Any, ClassVar
 
 from dnslib import QTYPE, DNSRecord
 
 from dnstrace.color import printer
 
-DNS_PROTOCOLS = {17: "UDP", 6: "TCP"}
+UDP_PROTOCOL = 17
+TCP_PROTOCOL = 6
+DNS_PROTOCOLS = {UDP_PROTOCOL: "UDP", TCP_PROTOCOL: "TCP"}
 IP_VERSIONS = {4: "IPv4"}
 ETH_LENGTH = 14
 
@@ -43,7 +46,8 @@ MIN_TERMINAL_WIDTH = 80
 MIN_TERMINAL_HEIGHT = 24
 SMALL_SCREEN_WIDTH = 110
 QUERY_TYPE_DISTRIBUTION_MAX_WIDTH = 20
-
+# DNS-over-TCP has 2-byte length prefix before the actual DNS message - RFC 1035 Section 4.2.2: "TCP usage"
+DNS_TCP_LENGTH_PREFIX = 2
 
 try:
     version = sys.version_info
@@ -61,9 +65,9 @@ class DnsTrace:
     def __init__(self, bpf_kprobe: bytes, bpf_sock: bytes, tail_mode: bool = False, show_domain: bool = False) -> None:
         self.bpf_kprobe = BPF(text=bpf_kprobe)
         self.bpf_sock = BPF(text=bpf_sock)
-        self.packets: Counter = Counter()
-        self.query_types: Counter = Counter()
-        self.start_time = datetime.now().strftime("%H:%M:%S")
+        self.packets: Counter[tuple[str, str, str, str, str, str, str, str]] = Counter()
+        self.query_types: Counter[str] = Counter()
+        self.start_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
         self.tail_mode = tail_mode
         self.show_domain = show_domain
         if not self.tail_mode:
@@ -73,7 +77,7 @@ class DnsTrace:
 
     @property
     def timestamp(self) -> str:
-        return datetime.now().strftime("%H:%M:%S")
+        return datetime.now().astimezone().strftime("%H:%M:%S")
 
     @staticmethod
     def clear_screen() -> None:
@@ -84,9 +88,8 @@ class DnsTrace:
         try:
             size = os.get_terminal_size()
             return size.columns, size.lines
-        except (OSError, AttributeError):
-            with contextlib.suppress(ValueError, TypeError):
-                return 80, 24
+        except OSError:
+            return 80, 24
 
     @staticmethod
     def format_cell(value: str, color: str, width: int, align: str) -> str:
@@ -99,7 +102,7 @@ class DnsTrace:
             content = truncated.center(width)
         return printer.cformat(content, color)
 
-    def initialize_columns(self, field_map=None):
+    def initialize_columns(self, field_map: dict[str, Any] | None = None) -> list[str]:
         if field_map is None:
             field_map = FIELD_MAP_FULL
         columns = list(field_map.keys())
@@ -107,7 +110,7 @@ class DnsTrace:
             columns.remove("Domain")
         return columns
 
-    def _update_column_configuration(self):
+    def _update_column_configuration(self) -> None:
         width, _ = self.get_terminal_size()
         if width < SMALL_SCREEN_WIDTH:
             self.field_map = FIELD_MAP_COMPACT
@@ -118,7 +121,7 @@ class DnsTrace:
         self.column_bases = ["─" * (cfg[1] + 2) for cfg in self.col_configs.values()]
         self.table_width = sum(cfg[1] + 3 for cfg in self.col_configs.values()) - 1
 
-    def _signal_handler(self, signum: int, frame) -> None:
+    def _signal_handler(self, signum: int, _frame: Any) -> None:
         if signum == signal.SIGWINCH:
             if self.check_terminal_size():
                 self._update_column_configuration()
@@ -141,14 +144,14 @@ class DnsTrace:
         print(f"\nNeeded for current config:\nWidth = {MIN_TERMINAL_WIDTH} Height = {MIN_TERMINAL_HEIGHT}")
         printer.warning("Please resize your terminal window and try again.")
 
-    def center_print(self, content: str, color: str = None):
+    def center_print(self, content: str, color: str | None = None) -> None:
         visible = len(re.sub(r"\x1b\[[0-9;]*m", "", content))
         terminal_width, _ = self.get_terminal_size()
         padding = (terminal_width - visible) // 2
         formatted_content = printer.cformat(content, color) if color else content
         print(f"{' ' * padding}{formatted_content}")
 
-    def center_table(self, content: str):
+    def center_table(self, content: str) -> str:
         terminal_width, _ = self.get_terminal_size()
         # Remove ANSI color codes to get actual visible length
         visible_length = len(re.sub(r"\x1b\[[0-9;]*m", "", content))
@@ -158,7 +161,7 @@ class DnsTrace:
     @staticmethod
     def create_skb_event(size: int) -> type[ct.Structure]:
         class SkbEvent(ct.Structure):
-            _fields_ = [
+            _fields_: ClassVar = [
                 ("ifindex", ct.c_uint32),
                 ("pid", ct.c_uint32),
                 ("comm", ct.c_char * 64),
@@ -167,7 +170,7 @@ class DnsTrace:
 
         return SkbEvent
 
-    def parse_packet(self, raw: bytes) -> tuple:
+    def parse_packet(self, raw: bytes) -> tuple[str, str, str, str, str, bool, str]:
         # Skip Ethernet header (14 bytes) - ([0-5]: Destination MAC, [6-11]: Source MAC, [12-13]: EtherType)
         ip_packet = raw[ETH_LENGTH:]
 
@@ -220,7 +223,7 @@ class DnsTrace:
         header_len = header_len * 4  # Convert to bytes
 
         # Process UDP packets (DNS over UDP)
-        if ip_protocol == 17:
+        if ip_protocol == UDP_PROTOCOL:
             # UDP Header Structure (8 bytes) - RFC 768:
             #  0                   1                   2                   3
             # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -231,7 +234,7 @@ class DnsTrace:
             # Skip UDP header - [Src Port (2)] [Dst Port (2)] [Length (2)] [Checksum (2)]
             dns_packet = udp_packet[8:]
         # Process TCP packets (DNS over TCP)
-        elif ip_protocol == 6:
+        elif ip_protocol == TCP_PROTOCOL:
             # Skip IP header to get TCP packet
             tcp_packet = ip_packet[header_len:]
 
@@ -252,10 +255,8 @@ class DnsTrace:
             # Data Offset (TCP header length) is in upper 4 bits of byte 12
             tcp_header_len = (tcp_packet[12] >> 4) * 4  # Convert 32-bit words to bytes
             dns_packet = tcp_packet[tcp_header_len:]  # Skip TCP header
-
-            # DNS-over-TCP has 2-byte length prefix before the actual DNS message - RFC 1035 Section 4.2.2: "TCP usage"
-            if len(dns_packet) >= 2:
-                dns_packet = dns_packet[2:]  # Skip the 2-byte length prefix
+            if len(dns_packet) >= DNS_TCP_LENGTH_PREFIX:
+                dns_packet = dns_packet[DNS_TCP_LENGTH_PREFIX:]  # Skip the 2-byte length prefix
 
         # Parse DNS payload
         dns_data = DNSRecord.parse(dns_packet)
@@ -272,7 +273,7 @@ class DnsTrace:
         self.center_print(
             f"{printer.cformat(f'Started: {self.start_time}', 'blue')}  "
             f"{printer.cformat(f'Updated: {self.timestamp}', 'yellow')}  "
-            f"{printer.cformat(f'Total: {self.packets.total()}', 'green')}"
+            f"{printer.cformat(f'Total: {self.packets.total()}', 'green')}",
         )
 
         # Query Type Distribution
@@ -287,7 +288,7 @@ class DnsTrace:
                     f"{self.format_cell(str(count), 'blue', 6, 'right')}"
                 )
                 type_chart.append(self.center_table(chart_line))
-            print(f"\n{'\n'.join(type_chart)}\n")
+            print("\n" + "\n".join(type_chart) + "\n")
 
         table_lines = []
         # Table Headers
@@ -304,7 +305,7 @@ class DnsTrace:
             row = []
             for col in self.columns:
                 idx, color, width, align = self.field_map[col]
-                value = count if col == "Count" else key[idx]
+                value = count if col == "Count" else key[idx]  # type: ignore[call-overload]
                 row.append(self.format_cell(f"{value}", color, width, align))
             table_row = f"│ {' │ '.join(row)} │"
             table_lines.append(table_row)
@@ -315,12 +316,12 @@ class DnsTrace:
         for line in table_lines:
             print(self.center_table(line))
 
-    def display_dns_event(self, cpu: int, data: int, size: int) -> None:
+    def display_dns_event(self, _cpu: int, data: int, size: int) -> None:
         skb_event = self.create_skb_event(size)
         sk = ct.cast(data, ct.POINTER(skb_event)).contents
 
         try:
-            with open(f"/proc/{sk.pid}/comm") as proc_comm:
+            with Path(f"/proc/{sk.pid}/comm").open() as proc_comm:
                 proc_name = proc_comm.read().rstrip()
         except OSError:
             try:
@@ -333,11 +334,12 @@ class DnsTrace:
 
         if is_query:
             if self.tail_mode:
+                domain = f" ({domain})" if self.show_domain else ""
                 print(
-                    f"{printer.cformat(f'{self.timestamp}:', 'blue')} "
+                    f"{printer.cformat(f'{self.timestamp}', 'blue')} "
                     f"{printer.cformat(f'query[{query_type}/{ip_proto}]', 'cyan')} "
-                    f"{printer.cformat(f'{proc_name}{f" ({domain})" if self.show_domain else ""}', 'green')} "
-                    f"{printer.cformat(f'from {ip_src}', 'yellow')}"
+                    f"{printer.cformat(f'{proc_name}{domain}', 'green')} "
+                    f"{printer.cformat(f'from {if_name} ({ip_src})', 'yellow')}",
                 )
             else:
                 key = (proc_name, if_name, ip_version, ip_proto, ip_src, ip_dst, query_type, domain)
@@ -360,8 +362,8 @@ class DnsTrace:
         else:
             self.print_stats()
 
-        while True:
-            try:
+        try:
+            while True:
                 self.bpf_sock.perf_buffer_poll()
-            except KeyboardInterrupt:
-                sys.exit()
+        except KeyboardInterrupt:
+            sys.exit()

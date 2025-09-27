@@ -1,22 +1,21 @@
+# ruff: noqa: BLE001
+# BLE001: intentionally catching all exceptions
+
 import argparse
 import os
+from pathlib import Path
 import sys
 
 from dnstrace.dnstrace import DnsTrace
 
-CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+CUR_DIR = Path(__file__).parent.resolve()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Monitor DNS queries by host processes using eBPF!")
     parser.add_argument("-t", "--tail", action="store_true", help="Stream live DNS queries")
     parser.add_argument("-d", "--domain", action="store_true", help="Show DNS query domains")
     args = parser.parse_args()
-
-    with open(os.path.join(CUR_DIR, "bpf_kprobe.c"), "rb") as f:
-        bpf_kprobe = f.read()
-    with open(os.path.join(CUR_DIR, "bpf_sock.c"), "rb") as f:
-        bpf_sock = f.read()
 
     if os.geteuid() != 0:
         print("Error: This tool requires root privileges. Please run with sudo.", file=sys.stderr)
@@ -24,9 +23,9 @@ def main():
 
     print("dnstrace is initializing...")
     try:
-        with open(os.path.join(CUR_DIR, "bpf_kprobe.c"), "rb") as f:
+        with (CUR_DIR / "bpf_kprobe.c").open("rb") as f:
             bpf_kprobe = f.read()
-        with open(os.path.join(CUR_DIR, "bpf_sock.c"), "rb") as f:
+        with (CUR_DIR / "bpf_sock.c").open("rb") as f:
             bpf_sock = f.read()
         dns_trace = DnsTrace(bpf_kprobe, bpf_sock, tail_mode=args.tail, show_domain=args.domain)
         dns_trace.start()
