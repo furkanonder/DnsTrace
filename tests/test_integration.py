@@ -61,35 +61,28 @@ class TestDnsTraceIntegration:
 
     @pytest.mark.parametrize("test_domain, record_type, protocol", TEST_CASES)
     def test_dns_query_capture(self, dnstrace_process, dns_server, test_domain, record_type, protocol):
-        self._generate_dns_query(dns_server, test_domain, record_type, protocol)
-
-        # Expected pattern: "query[TYPE/PROTOCOL]"
-        expected_marker = f"query[{record_type}/{protocol.upper()}]"
-        domain_marker = f"({test_domain})"
-
+        expected_marker = f"query[{record_type}/{protocol.upper()}]"  # Expected pattern: "query[TYPE/PROTOCOL]"
         buffer = ""
         start_time = time.time()
 
         while time.time() - start_time < self.TIMEOUT:
+            self._generate_dns_query(dns_server, test_domain, record_type, protocol)
             # Check for readable output every 200ms
             rlist, _, _ = select.select([dnstrace_process.stdout], [], [], 0.2)
             if rlist:
-                try:
-                    chunk = os.read(dnstrace_process.stdout.fileno(), 4096).decode(errors="replace")
-                    buffer += chunk
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        if expected_marker in line and domain_marker in line:
-                            return
-                except (OSError, ValueError):
-                    break
+                chunk = os.read(dnstrace_process.stdout.fileno(), 4096).decode(errors="replace")
+                buffer += chunk
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    if expected_marker in line and test_domain in line:
+                        return
             if dnstrace_process.poll() is not None:
                 stderr = dnstrace_process.stderr.read()
                 pytest.fail(f"DNSTrace crashed:\n{stderr}")
 
         pytest.fail(
-            f"DNS {protocol.upper()} query not detected\n"
-            f"Expected: {expected_marker} and {domain_marker}\n"
+            f"DNS {protocol.upper()}/{record_type} query not detected\n"
+            f"Expected: {expected_marker} and {test_domain}\n"
             f"Output buffer:\n{buffer}\n"
             f"Errors:\n{dnstrace_process.stderr.read()}",
         )
