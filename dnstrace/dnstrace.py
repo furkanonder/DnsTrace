@@ -267,6 +267,9 @@ class DnsTrace:
         return IP_VERSIONS[ip_version], DNS_PROTOCOLS[ip_protocol], ip_src, ip_dst, query_type, is_query, domain
 
     def print_stats(self) -> None:
+        if not self.check_terminal_size():
+            self.display_terminal_size_error()
+            return
         self.clear_screen()
         # Header
         self.center_print("DNSTrace [v0.1.0]", "cyan")
