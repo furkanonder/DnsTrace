@@ -9,14 +9,21 @@ description = "DnsTrace is a tool that identifies DNS queries made by processes 
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-keywords = ["dns", "ebpf", "bpf", "trace"]
-authors = [{name = "Furkan Onder", email="furkanonder@protonmail.com"}]
+keywords = ["dns", "ebpf", "bpf", "trace", "monitoring", "networking"]
+authors = [
+    {name = "Furkan Onder", email = "furkanonder@protonmail.com"}
+]
+maintainers = [
+    {name = "Furkan Onder", email = "furkanonder@protonmail.com"}
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -24,13 +31,37 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: System :: Monitoring",
     "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Internet :: Name Service (DNS)",
+    "Typing :: Typed",
 ]
-dependencies = ["dnslib==0.9.26"]
+dependencies = [
+    "dnslib>=0.9.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4.2",
+    "ruff>=0.13.2",
+    "mypy>=1.18.2",
+    "pre-commit>=4.3.0",
+]
+test = [
+    "pytest>=8.4.2",
+]
+all = [
+    "pytest>=8.4.2",
+    "ruff>=0.13.2",
+    "mypy>=1.18.2",
+    "pre-commit>=4.3.0",
+]
 
 [project.urls]
-"Homepage" = "https://github.com/furkanonder/dnstrace"
-"Bug Reports" = "https://github.com/furkanonder/dnstrace/issues"
-"Source" = "https://github.com/furkanonder/dnstrace"
+Homepage = "https://github.com/furkanonder/dnstrace"
+Documentation = "https://github.com/furkanonder/dnstrace#readme"
+Repository = "https://github.com/furkanonder/dnstrace.git"
+"Bug Tracker" = "https://github.com/furkanonder/dnstrace/issues"
+Changelog = "https://github.com/furkanonder/dnstrace/blob/main/CHANGELOG.md"
 
 [project.scripts]
 dnstrace = "dnstrace.__main__:main"
@@ -38,6 +69,7 @@ dnstrace = "dnstrace.__main__:main"
 [tool.setuptools]
 zip-safe = false
 include-package-data = true
+packages = ["dnstrace"]
 
 [tool.docformatter]
 recursive = true
@@ -67,6 +99,8 @@ ignore_missing_imports = true
 show_error_codes = true
 show_column_numbers = true
 pretty = true
+explicit_package_bases = true
+namespace_packages = true
 
 # Ignore type checking for test files
 [[tool.mypy.overrides]]
@@ -127,6 +161,7 @@ max-complexity = 10
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
+known-first-party = ["dnstrace"]
 
 [tool.ruff.format]
 quote-style = "double"
