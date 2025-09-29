@@ -80,8 +80,12 @@ class DnsTrace:
         return datetime.now().astimezone().strftime("%H:%M:%S")
 
     @staticmethod
-    def clear_screen() -> None:
-        os.system("cls" if os.name == "nt" else "clear")
+    def hide_cursor() -> None:
+        print("\x1b[?25l", end="", flush=True)
+
+    @staticmethod
+    def show_cursor() -> None:
+        print("\x1b[?25h", end="", flush=True)
 
     @staticmethod
     def get_terminal_size() -> tuple[int, int]:
@@ -101,6 +105,10 @@ class DnsTrace:
         else:
             content = truncated.center(width)
         return printer.cformat(content, color)
+
+    def clear_screen(self) -> None:
+        self.hide_cursor()
+        os.system("cls" if os.name == "nt" else "clear")
 
     def initialize_columns(self, field_map: dict[str, Any] | None = None) -> list[str]:
         if field_map is None:
@@ -369,4 +377,5 @@ class DnsTrace:
             while True:
                 self.bpf_sock.perf_buffer_poll()
         except KeyboardInterrupt:
+            self.show_cursor()
             sys.exit()
