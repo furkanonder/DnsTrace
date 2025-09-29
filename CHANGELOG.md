@@ -5,7 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] - 2025-09-28
+## [0.2.2] - 2025-01-28
+
+### Fixed
+
+- Use local timezone instead of UTC for start time display
+- Ensures start time is displayed in user's local timezone
+- Improves user experience by showing familiar local time
+
+### Changed
+
+- Update demo.gif to showcase latest interface changes
+
+## [0.2.1] - 2025-01-28
 
 ### Fixed
 
@@ -42,6 +54,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Simple terminal output with colored text
 - Support for IPv4 DNS queries
 
+<<<<<<< HEAD
 [0.2.1]: https://github.com/furkanonder/dnstrace/releases/tag/v0.2.1
+=======
+[0.2.2]: https://github.com/furkanonder/dnstrace/releases/tag/v0.2.2
+>>>>>>> 008d0a4
 [0.2.0]: https://github.com/furkanonder/dnstrace/releases/tag/v0.2.0
 [0.1.0]: https://github.com/furkanonder/dnstrace/releases/tag/0.1.0
