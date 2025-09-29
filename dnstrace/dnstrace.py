@@ -1,6 +1,6 @@
 from collections import Counter
 import ctypes as ct
-from datetime import datetime, timezone
+from datetime import datetime
 import os
 from pathlib import Path
 import re
@@ -68,7 +68,7 @@ class DnsTrace:
         self.bpf_sock = BPF(text=bpf_sock)
         self.packets: Counter[tuple[str, str, str, str, str, str, str, str]] = Counter()
         self.query_types: Counter[str] = Counter()
-        self.start_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        self.start_time = datetime.now().astimezone().strftime("%H:%M:%S")
         self.tail_mode = tail_mode
         self.show_domain = show_domain
         if not self.tail_mode:
