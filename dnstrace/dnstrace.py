@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 
 from dnslib import QTYPE, DNSRecord
 
+from dnstrace._version import __version__
 from dnstrace.color import printer
 
 UDP_PROTOCOL = 17
@@ -280,7 +281,7 @@ class DnsTrace:
             return
         self.clear_screen()
         # Header
-        self.center_print("DNSTrace [v0.1.0]", "cyan")
+        self.center_print(f"DNSTrace [v{__version__}]", "cyan")
         self.center_print(
             f"{printer.cformat(f'Started: {self.start_time}', 'blue')}  "
             f"{printer.cformat(f'Updated: {self.timestamp}', 'yellow')}  "
